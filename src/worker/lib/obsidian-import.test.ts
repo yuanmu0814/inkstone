@@ -26,7 +26,12 @@ describe('findObsidianAsset', () => {
   })
 
   it('resolves references relative to the note directory', () => {
-    const found = findObsidianAsset(index, 'pic.png', 'Notes/sub')
+    const relativeIndex = buildObsidianAssetIndex([
+      entry('pic.png'),
+      entry('Notes/sub/pic.png'),
+    ])
+    const found = findObsidianAsset(relativeIndex, 'pic.png', 'Notes/sub')
+    expect(found?.path).toBe('Notes/sub/pic.png')
     expect(found?.name).toBe('pic.png')
   })
 
@@ -38,13 +43,21 @@ describe('findObsidianAsset', () => {
   it('returns null for unknown files', () => {
     expect(findObsidianAsset(index, 'missing.png', '')).toBeNull()
   })
+
+  it('does not guess when a basename appears in multiple directories', () => {
+    const ambiguous = buildObsidianAssetIndex([
+      entry('one/pic.png'),
+      entry('two/pic.png'),
+    ])
+    expect(findObsidianAsset(ambiguous, 'pic.png', 'notes')).toBeNull()
+  })
 })
 
 describe('collectObsidianReferences', () => {
   it('collects markdown image paths and wiki embeds without duplicates', () => {
-    const content = '![one](a.png) and ![[b.jpg]] and again ![one](a.png)'
+    const content = '![one](a.png "title") and ![space](<folder/my%20image.png>) and ![[b.jpg]] and again ![one](a.png)'
     const refs = collectObsidianReferences(content)
-    expect(refs).toEqual(['a.png', 'b.jpg'])
+    expect(refs).toEqual(['a.png', 'folder/my image.png', 'b.jpg'])
   })
 
   it('skips remote, data, and managed URLs', () => {
@@ -62,6 +75,16 @@ describe('rewriteObsidianReferences', () => {
   it('rewrites markdown image references', () => {
     const rewritten = rewriteObsidianReferences('![alt](pic.png)', () => '/api/files/1')
     expect(rewritten).toBe('![alt](/api/files/1)')
+  })
+
+  it('rewrites angle-bracket destinations with titles', () => {
+    const rewritten = rewriteObsidianReferences('![alt](<folder/pic%20one.png> "title")', () => '/api/files/1')
+    expect(rewritten).toBe('![alt](/api/files/1)')
+  })
+
+  it('rewrites escaped spaces and parentheses', () => {
+    const rewritten = rewriteObsidianReferences('![alt](folder/pic\\ one\\(2\\).png)', () => '/api/files/3')
+    expect(rewritten).toBe('![alt](/api/files/3)')
   })
 
   it('rewrites wiki image embeds with alias support', () => {
@@ -92,7 +115,8 @@ describe('stripObsidianComments', () => {
 describe('normalizeObsidianPath', () => {
   it('normalizes separators and leading dot slashes', () => {
     expect(normalizeObsidianPath('.\\assets\\pic.png')).toBe('assets/pic.png')
-    expect(normalizeObsidianPath(' ./a.png ')).toBe('./a.png')
+    expect(normalizeObsidianPath(' ./a.png ')).toBe('a.png')
+    expect(normalizeObsidianPath('folder/pic%20one.png?raw=1')).toBe('folder/pic one.png')
   })
 })
 

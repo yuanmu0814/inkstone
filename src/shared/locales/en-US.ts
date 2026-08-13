@@ -939,6 +939,7 @@ export const EN_US_MESSAGES = {
     "shell.unsaved_changes": "Unsaved changes",
     "sidebar.account_and_settings": "Account and settings",
     "sidebar.collapse": "Collapse",
+    "sidebar.import_local_files": "Import local Markdown",
     "sidebar.collapse_navigation": "Collapse navigation",
     "sidebar.create_first_folder": "Create first folder",
     "sidebar.create_new_note_here": "Create new note here",

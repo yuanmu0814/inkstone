@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArrowDown, ArrowUp, ChevronRight, Clock, CornerUpLeft, FilePlus2, FileText, FolderClosed, FolderInput, FolderOpen, FolderPlus, Hash, Inbox, LogOut, Moon, MoreHorizontal, Palette, PanelLeft, PanelLeftClose, Pencil, Plus, Settings, Star, Sun, Trash2, Waypoints, } from 'lucide-react';
+import { Archive, ArrowDown, ArrowUp, ChevronRight, Clock, CornerUpLeft, FilePlus2, FileText, FileUp, FolderClosed, FolderInput, FolderOpen, FolderPlus, Hash, Inbox, LogOut, Moon, MoreHorizontal, Palette, PanelLeft, PanelLeftClose, Pencil, Plus, Settings, Star, Sun, Trash2, Waypoints, } from 'lucide-react';
 import { LIMITS } from '@shared/constants';
 import type { Tag, ViewKind } from '@shared/types';
 import { compareTagNames } from '@shared/markdown-utils';
@@ -15,6 +15,7 @@ import { FolderAppearance, FolderPicker } from '../folders/FolderPicker';
 import { TagAppearance } from '../tags/TagAppearance';
 import { createTag, deleteTag, renameTag, setTagColor } from '../tags/tagMutations';
 import { t } from "../../lib/i18n";
+import { api } from '../../lib/api';
 export function Sidebar({ collapsed = false, onCollapse, }: {
     collapsed?: boolean;
     onCollapse?: () => void;
@@ -45,6 +46,8 @@ export function Sidebar({ collapsed = false, onCollapse, }: {
           <ViewItem icon={<Star size={14}/>} label={t("navigation.favorites")} view="starred" count={counts.starred} active={view === 'starred'} onSelect={openView}/>
           <ViewItem icon={<Inbox size={14}/>} label={t("navigation.unfiled")} view="unfiled" count={counts.unfiled} active={view === 'unfiled'} onSelect={openView}/>
         </div>
+
+        <LocalImportControl />
 
         <FolderSection />
         <TagSection />
@@ -81,6 +84,7 @@ function SidebarRail({ onExpand }: {
         <RailButton label={t("navigation.trash")} active={view === 'trash'} icon={<Trash2 size={16}/>} onClick={() => openView('trash')}/>
         <div className="my-1 h-px w-6 bg-[var(--border-subtle)]"/>
         <RailButton label={t("common.new_note")} combo="mod+n" accent icon={<FilePlus2 size={16}/>} onClick={() => void createContextualNote()}/>
+        <LocalImportControl rail />
       </div>
 
       <span className="flex-1"/>
@@ -90,6 +94,54 @@ function SidebarRail({ onExpand }: {
       </div>
     </aside>);
 }
+
+function LocalImportControl({ rail = false }: { rail?: boolean }) {
+    const fileRef = useRef<HTMLInputElement>(null);
+    const [busy, setBusy] = useState(false);
+    const toast = useUi((s) => s.toast);
+    const pull = useNotes((s) => s.pull);
+    const label = t("sidebar.import_local_files");
+    const onChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = [...(event.target.files ?? [])];
+        event.target.value = '';
+        if (!files.length || busy) return;
+        setBusy(true);
+        try {
+            const result = await api.transfer.import(files);
+            const refreshed = await pull({ force: true }).then(() => true, () => false);
+            const summary = t("settings.created_value0_updated_value1_skipped_value2_restored_value3_attachments", {
+                value0: result.createdNotes,
+                value1: result.updatedNotes,
+                value2: result.skippedNotes,
+                value3: result.createdAttachments,
+                value4: result.skippedAttachments,
+            });
+            const details = result.warnings.length ? `${summary}\uFF1B${result.warnings[0]}` : summary;
+            toast({
+                title: t("settings.import_completed"),
+                description: refreshed ? details : `${details}\uFF1B${t("settings.operation_completed_but_refresh_failed")}`,
+                tone: result.warnings.length || !refreshed ? 'warning' : 'success',
+                duration: 7000,
+            });
+        } catch (error) {
+            toast({
+                title: t("settings.import_failed"),
+                description: error instanceof Error ? error.message : String(error),
+                tone: 'danger',
+            });
+        } finally {
+            setBusy(false);
+        }
+    };
+    return <>
+      {rail ? <RailButton label={label} icon={<FileUp size={16}/>} onClick={() => fileRef.current?.click()}/> : <button type="button" disabled={busy} onClick={() => fileRef.current?.click()} className="mt-2 flex h-9 w-full items-center gap-2 rounded-[var(--r-md)] border border-dashed border-[var(--border-default)] px-2.5 text-left text-[12px] text-[var(--text-secondary)] transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:text-[var(--text-primary)] disabled:pointer-events-none disabled:opacity-45">
+          <FileUp size={14} className="shrink-0 text-[var(--accent)]"/>
+          <span className="truncate">{busy ? t("common.loading") : label}</span>
+        </button>}
+      <input ref={fileRef} type="file" hidden multiple accept=".md,.markdown,.zip" onChange={(event) => void onChange(event)}/>
+    </>;
+}
+
 function RailButton({ label, combo, icon, active, accent, onClick, }: {
     label: string;
     combo?: string;

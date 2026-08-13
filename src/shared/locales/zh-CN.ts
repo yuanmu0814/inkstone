@@ -940,6 +940,7 @@ export const ZH_CN_MESSAGES = {
     "shell.unsaved_changes": "有未保存的改动",
     "sidebar.account_and_settings": "账号与设置",
     "sidebar.collapse": "折叠",
+    "sidebar.import_local_files": "导入本地 Markdown",
     "sidebar.collapse_navigation": "收起导航",
     "sidebar.create_first_folder": "创建第一个文件夹",
     "sidebar.create_new_note_here": "在此新建笔记",

@@ -6,10 +6,10 @@ export interface ObsidianAsset {
 
 export interface ObsidianAssetIndex {
   byPath: Map<string, ObsidianAsset>
-  byName: Map<string, ObsidianAsset>
+  byName: Map<string, ObsidianAsset | null>
 }
 
-const MD_IMAGE_RE = /!\[([^\]]*)\]\(([^)]+)\)/g
+const MD_IMAGE_RE = /!\[([^\]]*)\]\(\s*((?:\\.|[^)\n])+?)\s*\)/g
 const WIKI_ASSET_RE = /!\[\[([^[\]#^|]{1,300}?)(?:\|([^\]\n]{0,100}))?\]\]/g
 const ASSET_EXT_RE = /\.(?:png|jpe?g|gif|webp|avif|svg|pdf)$/i
 
@@ -17,13 +17,15 @@ export function buildObsidianAssetIndex(
   entries: readonly { path: string; data: Uint8Array }[],
 ): ObsidianAssetIndex {
   const byPath = new Map<string, ObsidianAsset>()
-  const byName = new Map<string, ObsidianAsset>()
+  const byName = new Map<string, ObsidianAsset | null>()
   for (const entry of entries) {
     const path = normalizeObsidianPath(entry.path)
     const name = pathBasename(path)
     const asset: ObsidianAsset = { path, name, bytes: entry.data }
     if (!byPath.has(path.toLowerCase())) byPath.set(path.toLowerCase(), asset)
-    if (!byName.has(name.toLowerCase())) byName.set(name.toLowerCase(), asset)
+    const nameKey = name.toLowerCase()
+    if (!byName.has(nameKey)) byName.set(nameKey, asset)
+    else byName.set(nameKey, null)
   }
   return { byPath, byName }
 }
@@ -35,12 +37,12 @@ export function findObsidianAsset(
 ): ObsidianAsset | null {
   const normalized = normalizeObsidianPath(reference)
   if (!normalized) return null
-  const direct = index.byPath.get(normalized.toLowerCase())
-  if (direct) return direct
   if (dir) {
     const relative = index.byPath.get(normalizeObsidianPath(`${dir}/${normalized}`).toLowerCase())
     if (relative) return relative
   }
+  const direct = index.byPath.get(normalized.toLowerCase())
+  if (direct) return direct
   return index.byName.get(pathBasename(normalized).toLowerCase()) ?? null
 }
 
@@ -54,7 +56,9 @@ export function collectObsidianReferences(content: string): string[] {
       out.push(normalized)
     }
   }
-  content.replace(MD_IMAGE_RE, (_full, _alt, href) => {
+  content.replace(MD_IMAGE_RE, (_full, _alt, rawDestination) => {
+    const href = markdownImageDestination(rawDestination)
+    if (!href) return _full
     consider(href)
     return _full
   })
@@ -69,8 +73,9 @@ export function rewriteObsidianReferences(
   content: string,
   resolve: (reference: string) => string | null,
 ): string {
-  let next = content.replace(MD_IMAGE_RE, (full, alt, href) => {
-    if (isManagedReference(href)) return full
+  let next = content.replace(MD_IMAGE_RE, (full, alt, rawDestination) => {
+    const href = markdownImageDestination(rawDestination)
+    if (!href || isManagedReference(href)) return full
     const url = resolve(normalizeObsidianPath(href))
     return url ? `![${alt}](${url})` : full
   })
@@ -87,9 +92,14 @@ export function stripObsidianComments(content: string): string {
 }
 
 export function normalizeObsidianPath(value: string): string {
-  return value
+  let decoded = value.trim()
+  try {
+    decoded = decodeURIComponent(decoded)
+  } catch {}
+  return decoded
     .replace(/\\/g, '/')
     .replace(/^\.\/+/, '')
+    .replace(/[?#].*$/, '')
     .trim()
 }
 
@@ -111,6 +121,16 @@ export function mimeForAttachmentName(name: string): string {
 function isManagedReference(href: string): boolean {
   const clean = href.trim()
   return /^(?:https?:|data:|file:|\/api\/)/i.test(clean) || clean.startsWith('#') || clean.startsWith('^')
+}
+
+function markdownImageDestination(raw: string): string | null {
+  const value = raw.trim()
+  if (!value) return null
+  if (value.startsWith('<')) {
+    const end = value.indexOf('>')
+    return end > 1 ? value.slice(1, end) : null
+  }
+  return value.match(/^((?:\\.|[^\s])+)/)?.[1]?.replace(/\\([\\ ()])/g, '$1') ?? null
 }
 
 function pathBasename(path: string): string {

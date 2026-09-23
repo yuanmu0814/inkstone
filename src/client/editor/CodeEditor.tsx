@@ -1,24 +1,28 @@
-import { useEffect, useRef } from 'react';
-import { Annotation, EditorState, type Extension } from '@codemirror/state';
-import { EditorView, drawSelection, dropCursor, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers, placeholder as placeholderExt, rectangularSelection, } from '@codemirror/view';
-import { bracketMatching, foldGutter, indentOnInput, indentUnit, syntaxHighlighting, defaultHighlightStyle, } from '@codemirror/language';
+import { useEffect, useRef, useState } from 'react';
+import { Annotation, Compartment, EditorState, type Extension } from '@codemirror/state';
+import { EditorView, drawSelection, dropCursor, keymap, lineNumbers, placeholder as placeholderExt, rectangularSelection, } from '@codemirror/view';
+import { foldGutter, indentOnInput, indentUnit, } from '@codemirror/language';
 import { defaultKeymap, history, historyKeymap, indentWithTab, standardKeymap, } from '@codemirror/commands';
-import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
+import { search, searchKeymap } from '@codemirror/search';
 import { acceptCompletion, autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, } from '@codemirror/autocomplete';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import type { EditorSettings } from '@shared/types';
 import { cn } from '../lib/cn';
-import { codeLanguages } from './codeLanguages';
 import { editorTheme } from './theme';
-import { focusModePlugin, markdownDecorations, typewriterPlugin } from './decorations';
+import { focusModePlugin, markdownDecorations, setFocusMode, typewriterPlugin } from './decorations';
 import { codeFenceSource, tagSource, wikiLinkSource, type CompletionSources } from './completion';
 import { pasteExtension, type PasteHandlers } from './paste';
-import { setHeading, smartEnter, tableTab, toggleBold, toggleBulletList, toggleHighlight, toggleInlineCode, toggleItalic, toggleOrderedList, toggleQuote, toggleStrikethrough, toggleTaskDone, toggleTaskList, } from './commands';
+import { completeCodeFenceOnEnter, setHeading, smartEnter, tableTab, toggleBold, toggleBulletList, toggleHighlight, toggleInlineCode, toggleItalic, toggleOrderedList, toggleQuote, toggleStrikethrough, toggleTaskDone, toggleTaskList, } from './commands';
+import { livePreview } from './live-preview';
+import type { Heading } from '../lib/markdown/renderer';
 import { t } from "../lib/i18n";
 
 const externalValueUpdate = Annotation.define<boolean>();
 export interface CodeEditorProps {
     value: string;
+    live?: boolean;
+    noteTitle?: string;
+    onHeadings?: (headings: Heading[]) => void;
     onChange: (value: string) => void;
     settings: EditorSettings;
     sources: CompletionSources;
@@ -29,12 +33,27 @@ export interface CodeEditorProps {
     placeholder?: string;
     className?: string;
 }
-export function CodeEditor({ value, onChange, settings, sources, handlers, onReady, onScroll, onCursorLine, placeholder = t("editor.start_writing"), className, }: CodeEditorProps) {
+export function DeferredCodeEditor({ visible, ...props }: CodeEditorProps & { visible: boolean }) {
+    const [initialized, setInitialized] = useState(visible);
+    useEffect(() => {
+        if (visible) setInitialized(true);
+    }, [visible]);
+    // Preserve undo history across mode changes once editing has started.
+    return visible || initialized ? <CodeEditor {...props}/> : null;
+}
+export function CodeEditor({ value, live = false, noteTitle = '', onHeadings, onChange, settings, sources, handlers, onReady, onScroll, onCursorLine, placeholder = t("editor.start_writing"), className, }: CodeEditorProps) {
     const hostRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
 
-    const cbRef = useRef({ onChange, onScroll, onCursorLine, sources, handlers });
-    cbRef.current = { onChange, onScroll, onCursorLine, sources, handlers };
+    const cbRef = useRef({ onChange, onScroll, onCursorLine, sources, handlers, onHeadings, noteTitle });
+    cbRef.current = { onChange, onScroll, onCursorLine, sources, handlers, onHeadings, noteTitle };
+
+    const liveCompartment = useRef(new Compartment());
+    const lineNumbersCompartment = useRef(new Compartment());
+    const tabSizeCompartment = useRef(new Compartment());
+    const placeholderCompartment = useRef(new Compartment());
+    const configuredDisplay = useRef({ live, lineNumbers: settings.lineNumbers });
+
     useEffect(() => {
         const host = hostRef.current;
         if (!host)
@@ -44,17 +63,15 @@ export function CodeEditor({ value, onChange, settings, sources, handlers, onRea
             drawSelection(),
             dropCursor(),
             rectangularSelection(),
-            highlightSpecialChars(),
-            highlightActiveLine(),
-            highlightSelectionMatches(),
-            bracketMatching(),
             closeBrackets(),
             indentOnInput(),
-            indentUnit.of(' '.repeat(settings.tabSize)),
+            tabSizeCompartment.current.of(indentUnit.of(' '.repeat(settings.tabSize))),
             EditorState.allowMultipleSelections.of(true),
             EditorView.lineWrapping,
-            EditorView.contentAttributes.of({ 'aria-label': placeholder }),
-            placeholderExt(placeholder),
+            placeholderCompartment.current.of([
+                placeholderExt(placeholder),
+                EditorView.contentAttributes.of({ 'aria-label': placeholder }),
+            ]),
             search({ top: true }),
             autocompletion({
                 override: [
@@ -70,17 +87,16 @@ export function CodeEditor({ value, onChange, settings, sources, handlers, onRea
             }),
             markdown({
                 base: markdownLanguage,
-                codeLanguages,
                 addKeymap: false,
             }),
-            syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
             editorTheme(),
             markdownDecorations,
+            liveCompartment.current.of(live ? livePreview((headings) => cbRef.current.onHeadings?.(headings), () => cbRef.current.noteTitle) : []),
             focusModePlugin,
             typewriterPlugin,
             pasteExtension(cbRef.current.handlers),
             keymap.of([
-                { key: 'Enter', run: smartEnter },
+                { key: 'Enter', run: (view) => completeCodeFenceOnEnter(view) || smartEnter(view) },
                 { key: 'Tab', run: (view) => acceptCompletion(view) || tableTab(view) },
                 { key: 'Mod-b', run: toggleBold, preventDefault: true },
                 { key: 'Mod-i', run: toggleItalic, preventDefault: true },
@@ -103,6 +119,11 @@ export function CodeEditor({ value, onChange, settings, sources, handlers, onRea
             keymap.of(standardKeymap),
             keymap.of(defaultKeymap),
             keymap.of([indentWithTab]),
+            lineNumbersCompartment.current.of(
+                settings.lineNumbers && !live
+                    ? [lineNumbers(), foldGutter()]
+                    : [],
+            ),
             EditorView.updateListener.of((update) => {
                 const external = update.transactions.some((transaction) => transaction.annotation(externalValueUpdate));
                 if (update.docChanged && !external) {
@@ -119,9 +140,6 @@ export function CodeEditor({ value, onChange, settings, sources, handlers, onRea
                 },
             }),
         ];
-        if (settings.lineNumbers) {
-            extensions.push(lineNumbers(), highlightActiveLineGutter(), foldGutter());
-        }
         const view = new EditorView({
             state: EditorState.create({ doc: value, extensions }),
             parent: host,
@@ -134,9 +152,44 @@ export function CodeEditor({ value, onChange, settings, sources, handlers, onRea
             view.destroy();
             viewRef.current = null;
         };
+    }, []);
 
+    useEffect(() => {
+        const view = viewRef.current;
+        if (!view) return;
+        if (configuredDisplay.current.live === live && configuredDisplay.current.lineNumbers === settings.lineNumbers)
+            return;
+        configuredDisplay.current = { live, lineNumbers: settings.lineNumbers };
+        view.dispatch({
+            effects: lineNumbersCompartment.current.reconfigure(
+                settings.lineNumbers && !live
+                    ? [lineNumbers(), foldGutter()]
+                    : [],
+            ),
+        });
+        view.dispatch({ effects: liveCompartment.current.reconfigure(live ? livePreview((headings) => cbRef.current.onHeadings?.(headings), () => cbRef.current.noteTitle) : []) });
+    }, [settings.lineNumbers, live]);
 
-    }, [settings.lineNumbers, settings.tabSize, placeholder]);
+    useEffect(() => {
+        const view = viewRef.current;
+        if (!view) return;
+        view.dispatch({
+            effects: tabSizeCompartment.current.reconfigure(
+                indentUnit.of(' '.repeat(settings.tabSize)),
+            ),
+        });
+    }, [settings.tabSize]);
+
+    useEffect(() => {
+        const view = viewRef.current;
+        if (!view) return;
+        view.dispatch({
+            effects: placeholderCompartment.current.reconfigure([
+                placeholderExt(placeholder),
+                EditorView.contentAttributes.of({ 'aria-label': placeholder }),
+            ]),
+        });
+    }, [placeholder]);
 
     useEffect(() => {
         const view = viewRef.current;
@@ -157,5 +210,9 @@ export function CodeEditor({ value, onChange, settings, sources, handlers, onRea
         if (content)
             content.spellcheck = settings.spellcheck;
     }, [settings.spellcheck]);
-    return (<div ref={hostRef} className={cn('ink-editor', className)} data-family={settings.fontFamily} data-focus-mode={settings.focusMode} data-typewriter={settings.typewriter}/>);
+
+    useEffect(() => {
+        viewRef.current?.dispatch({ effects: setFocusMode.of(settings.focusMode) });
+    }, [settings.focusMode]);
+    return (<div ref={hostRef} className={cn('ink-editor', className)} data-live={live} data-family={settings.fontFamily} data-focus-mode={settings.focusMode} data-typewriter={settings.typewriter}/>);
 }

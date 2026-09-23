@@ -39,6 +39,12 @@ describe('extractAttachmentIds', () => {
     )).toEqual([idB])
   })
 
+  it('collects a nested md-example while ignoring its ordinary code block', () => {
+    expect(extractAttachmentIds(
+      `~~~~~md-example\n~~~~md-example\n![a](/api/files/${idA})\n~~~~\n\`\`\`\n![b](/api/files/${idB})\n\`\`\`\n~~~~~`,
+    )).toEqual([idA])
+  })
+
   it('accepts the markdown-example alias', () => {
     expect(extractAttachmentIds(
       `~~~markdown-example\n![a](/api/files/${idA})\n~~~`,

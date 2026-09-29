@@ -10,11 +10,11 @@ beforeAll(async () => {
 
 describe('LaTeX math delimiters', () => {
   it('renders parenthesized inline math and bracketed display math through KaTeX', async () => {
-    const source = String.raw`以 \(\overline{\mathbf P}\) 为参考。
+    const source = String.raw`Using \(\overline{\mathbf P}\) as a reference.
 
 \[ \mathcal H\boldsymbol\psi_\nu=\lambda_\nu\boldsymbol\psi_\nu \]
 
-振型 \(\boldsymbol\psi_\nu\) 的幅值。`
+The mode \(\boldsymbol\psi_\nu\) has an amplitude.`
     const rendered = renderMarkdown(source)
     expect(rendered.hasMath).toBe(true)
 
@@ -51,7 +51,7 @@ describe('LaTeX math delimiters', () => {
   })
 
   it('leaves unmatched delimiters and code spans unchanged', () => {
-    const source = String.raw`未闭合 \(x 和 \[y` + '\n\n' + '代码 `\\(\\mathbf P\\)` 不是公式。'
+    const source = String.raw`Unmatched \(x and \[y` + '\n\n' + 'Code `\\(\\mathbf P\\)` is not math.'
     const rendered = renderMarkdown(source)
     expect(rendered.hasMath).toBe(false)
     expect(rendered.html).not.toContain('data-math')

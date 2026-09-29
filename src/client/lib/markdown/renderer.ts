@@ -192,37 +192,72 @@ md.renderer.rules.tab_panel_open = (tokens, index) => {
 md.renderer.rules.tab_panel_close = () => '</section>';
 const MATH_INLINE = /^\$(?!\s)((?:[^$\\]|\\.)+?)(?<!\s)\$/;
 md.inline.ruler.before('escape', 'math_inline', (state, silent) => {
-    if (state.src[state.pos] !== '$')
-        return false;
-    const match = MATH_INLINE.exec(state.src.slice(state.pos));
-    if (!match)
-        return false;
+    let content: string;
+    let markup: string;
+    let length: number;
+    if (state.src.startsWith('\\(', state.pos)) {
+        const end = findInlineMathEnd(state.src, state.pos + 2, state.posMax);
+        if (end < 0)
+            return false;
+        content = state.src.slice(state.pos + 2, end).trim();
+        if (!content)
+            return false;
+        markup = '\\(';
+        length = end + 2 - state.pos;
+    }
+    else {
+        if (state.src[state.pos] !== '$')
+            return false;
+        const match = MATH_INLINE.exec(state.src.slice(state.pos));
+        if (!match)
+            return false;
+        content = match[1]!;
+        markup = '$';
+        length = match[0].length;
+    }
     if (!silent) {
         const token = state.push('math_inline', 'span', 0);
-        token.content = match[1]!;
-        token.markup = '$';
+        token.content = content;
+        token.markup = markup;
         renderEnv(state.env).hasMath = true;
     }
-    state.pos += match[0].length;
+    state.pos += length;
     return true;
 });
+function findInlineMathEnd(source: string, start: number, end: number): number {
+    for (let index = start; index < end; index++) {
+        if (source[index] === '\n')
+            return -1;
+        if (source[index] !== '\\')
+            continue;
+        if (source[index + 1] === '\\') {
+            index++;
+            continue;
+        }
+        if (source[index + 1] === ')')
+            return index;
+    }
+    return -1;
+}
 md.block.ruler.before('fence', 'math_block', (state, startLine, endLine, silent) => {
     const line = blockLine(state, startLine);
-    if (!/^\$\$/.test(line))
+    const bracketed = line.startsWith('\\[');
+    if (!bracketed && !line.startsWith('$$'))
         return false;
+    const marker = bracketed ? '\\]' : '$$';
     const firstLine = line.slice(2);
     let content = '';
     let next = startLine;
     let found = false;
-    if (firstLine.trim().endsWith('$$')) {
+    if (firstLine.trim().endsWith(marker)) {
         content = firstLine.trim().slice(0, -2);
         found = true;
     }
     else {
         while (!found && ++next < endLine) {
             const text = blockLine(state, next);
-            if (text.trim().endsWith('$$')) {
-                content += text.slice(0, text.lastIndexOf('$$'));
+            if (text.trim().endsWith(marker)) {
+                content += text.slice(0, text.lastIndexOf(marker));
                 found = true;
             }
             else {
@@ -239,7 +274,7 @@ md.block.ruler.before('fence', 'math_block', (state, startLine, endLine, silent)
     const token = state.push('math_block', 'div', 0);
     token.content = content.trim();
     token.map = [startLine, next + 1];
-    token.markup = '$$';
+    token.markup = bracketed ? '\\[' : '$$';
     renderEnv(state.env).hasMath = true;
     state.line = next + 1;
     return true;
